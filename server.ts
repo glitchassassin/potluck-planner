@@ -27,21 +27,21 @@ server.listen(port, () => {
 
 let shuttingDown = false;
 
-function shutdown() {
+function shutdown(exitCode = 0) {
   if (shuttingDown) {
     return;
   }
 
   shuttingDown = true;
   logger("server.stopping", {}, "info");
-  server.close(() => assets.close().finally(() => process.exit(0)));
+  server.close(() => assets.close().finally(() => process.exit(exitCode)));
   server.closeAllConnections();
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => shutdown());
+process.on("SIGTERM", () => shutdown());
 
 server.on("error", (error) => {
   logger("server.error", { error: String(error) }, "error");
-  process.exitCode = 1;
+  shutdown(1);
 });

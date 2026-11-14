@@ -18,7 +18,7 @@ Preserve Remix's logging interface: register `logger()` or `logger({ log })`, ca
 
 Use Node's async context to correlate application logs with a generated request ID, returned as `X-Request-ID`. Measure elapsed time with a monotonic clock. Record handler duration separately from the duration until Node hands the response to the operating system. Record aborted responses separately; neither duration measures when the browser finishes receiving the response.
 
-Mask US phone numbers in string values to their last two digits, including nested application log fields and log messages. Leave other values unchanged. Request path and query parameters are logged without sanitization, including repeated query values. There is no field-name-based redaction or special error sanitization; HTTP errors are logged as strings and receive the same phone masking.
+Mask US phone numbers in string values to their last two digits, including nested application log fields and log messages. Convert bigint values to decimal strings and replace circular references with `[Circular]` so these fields can be logged as JSON. Leave other values unchanged. Request path and query parameters are logged without phone masking, including repeated query values. There is no field-name-based redaction or special error sanitization; HTTP errors are logged as strings and receive the same phone masking.
 
 Configure severity through `LOG_LEVEL` (`debug`, `info`, `warn`, `error`, or `silent`; default `info`) and request detail through `REQUEST_LOG_DETAIL` (default `summary`). Both request detail and `SERVER_TIMING` accept `off`, `summary`, and `detailed`. Browser-visible `Server-Timing` headers default to `off`; detailed mode includes explicitly instrumented operation durations.
 

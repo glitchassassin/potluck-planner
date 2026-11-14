@@ -5,6 +5,32 @@ import { describe, it } from "remix/test";
 import { createLogger, logger, Logger, readLogConfig, sanitize } from "./logger.ts";
 
 describe("logging privacy and configuration", () => {
+  it("logs bigint values and cycles without breaking a request", async () => {
+    const lines: string[] = [];
+    const log = createLogger(readLogConfig({}), (line) => lines.push(line));
+    const shared = { phone: "+12125550142", id: 123n };
+    const cyclic: Record<string, unknown> = { shared };
+    cyclic.self = cyclic;
+    const array: unknown[] = [];
+    array.push(array);
+    const router = createRouter({ middleware: [logger({ log })] });
+    router.get("/", (context) => {
+      context.logger("db.result", { cyclic, array, first: shared, second: shared });
+      return new Response("ok");
+    });
+    assert.equal((await router.fetch("http://localhost/")).status, 200);
+    const record = JSON.parse(lines[0]);
+    assert.deepEqual(record.cyclic, {
+      shared: { phone: "***42", id: "123" },
+      self: "[Circular]",
+    });
+    assert.deepEqual(record.array, ["[Circular]"]);
+    assert.deepEqual(record.first, record.cyclic.shared);
+    assert.deepEqual(record.second, record.first);
+    assert.equal(cyclic.self, cyclic);
+    assert.equal(shared.id, 123n);
+  });
+
   it("provides Remix-compatible context.logger and the same Logger context key", async () => {
     const lines: string[] = [];
     const log = createLogger(readLogConfig({}), (line) => lines.push(line));

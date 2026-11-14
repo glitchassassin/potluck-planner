@@ -42,14 +42,33 @@ export const requestContext = new AsyncLocalStorage<RequestLogContext>();
 
 const phoneInText = /(?<!\d)(?:\+?1[ .-]?)?(?:\(\d{3}\)|\d{3})[ .-]?\d{3}[ .-]?\d{4}(?!\d)/g;
 
-/** Mask US phone numbers in string values; leave other values unchanged. */
+/** Mask US phone strings and normalize values for JSON logging. */
 export function sanitize(value: unknown): unknown {
+  return normalize(value, true);
+}
+
+function normalize(value: unknown, maskPhones: boolean, ancestors = new Set<object>()): unknown {
+  if (typeof value === "bigint") return value.toString();
   if (typeof value === "string") {
-    return value.replace(phoneInText, (phone) => `***${phone.replace(/\D/g, "").slice(-2)}`);
+    return maskPhones
+      ? value.replace(phoneInText, (phone) => `***${phone.replace(/\D/g, "").slice(-2)}`)
+      : value;
   }
-  if (Array.isArray(value)) return value.map(sanitize);
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, sanitize(entry)]));
+    if (ancestors.has(value)) return "[Circular]";
+    ancestors.add(value);
+    try {
+      return Array.isArray(value)
+        ? value.map((entry) => normalize(entry, maskPhones, ancestors))
+        : Object.fromEntries(
+            Object.entries(value).map(([key, entry]) => [
+              key,
+              normalize(entry, maskPhones, ancestors),
+            ]),
+          );
+    } finally {
+      ancestors.delete(value);
+    }
   }
   return value;
 }
@@ -90,8 +109,8 @@ export function createLogger(
     log(
       JSON.stringify({
         ...(sanitize(fieldsToMask) as Record<string, unknown>),
-        pathname,
-        query,
+        pathname: normalize(pathname, false),
+        query: normalize(query, false),
         timestamp: new Date().toISOString(),
         level,
         event: sanitize(message),
