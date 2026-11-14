@@ -9,12 +9,13 @@ The app is currently a Hello World scaffold; the features above are planned.
 Run the app as a single container with one HTTP port and a persistent volume for SQLite data. Configure your host to serve it over HTTPS and back up the data volume regularly.
 
 ```sh
-docker build -t potluck-planner .
+docker pull ghcr.io/glitchassassin/potluck-planner:latest
 docker run -d --name potluck-planner --restart unless-stopped \
-  -p 44100:44100 -v potluck-data:/data potluck-planner
+  -p 44100:44100 -v potluck-data:/data \
+  ghcr.io/glitchassassin/potluck-planner:latest
 ```
 
-The app is available on port `44100`, with data stored in `/data`. We plan to publish a container image and provide one-click setup scripts for a couple of cloud hosts. Until then, build the image from source as shown above.
+The app is available on port `44100`, with data stored in `/data`.
 
 ## Development
 
