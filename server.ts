@@ -1,5 +1,6 @@
 import * as http from "node:http";
-import { createRequestListener } from "remix/node-fetch-server";
+import { createObservedListener } from "./app/observability/http.ts";
+import { createLogger, readLogConfig } from "./app/observability/logger.ts";
 
 import { assets } from "./app/assets.ts";
 import { router } from "./app/router.ts";
@@ -10,14 +11,18 @@ const hmrProxyPort = process.env.HMR_PROXY_PORT
   : null;
 const isHmr = process.env.REMIX_NODE_HMR === "1";
 
-const server = http.createServer(createRequestListener(router.fetch, { trustProxy: isHmr }));
+const config = readLogConfig();
+const logger = createLogger(config);
+const server = http.createServer(
+  createObservedListener(router.fetch, config, { trustProxy: isHmr }),
+);
 
 server.listen(port, () => {
   if (isHmr) {
     import("remix/node-hmr/runtime").then((nodeHmr) => nodeHmr.emitServerReady());
   }
 
-  console.log(`Server listening on http://localhost:${hmrProxyPort ?? port}`);
+  logger("server.started", { port: hmrProxyPort ?? port }, "info");
 });
 
 let shuttingDown = false;
@@ -28,9 +33,15 @@ function shutdown() {
   }
 
   shuttingDown = true;
+  logger("server.stopping", {}, "info");
   server.close(() => assets.close().finally(() => process.exit(0)));
   server.closeAllConnections();
 }
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+server.on("error", (error) => {
+  logger("server.error", { error: String(error) }, "error");
+  process.exitCode = 1;
+});
