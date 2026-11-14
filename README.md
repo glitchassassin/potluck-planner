@@ -2,8 +2,6 @@
 
 Organize potlucks with your friends. Create an event, share an invitation link, and keep track of what everyone is bringing. Joining is easy: enter your phone number and a code sent by SMS. No password to remember.
 
-The app is currently a Hello World scaffold; the features above are planned.
-
 ## Deployment
 
 Run the app as a single container with one HTTP port and a persistent volume for SQLite data. Configure your host to serve it over HTTPS and back up the data volume regularly.
