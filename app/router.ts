@@ -21,3 +21,8 @@ declare module "remix" {
 }
 
 router.map(routes, controller);
+
+if (process.env.NODE_ENV === "development") {
+  const { kitchenSinkRoute, kitchenSink } = await import("../dev/kitchen-sink.tsx");
+  router.map(kitchenSinkRoute, kitchenSink);
+}
