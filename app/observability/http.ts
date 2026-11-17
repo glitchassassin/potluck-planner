@@ -1,51 +1,54 @@
 import { randomUUID } from "node:crypto";
 import type { RequestListener } from "node:http";
-import { createRequestListener } from "remix/node-fetch-server";
+import { createRequestListener, type FetchHandler } from "remix/node-fetch-server";
+import { clientIps, normalizeIp } from "./client-ip.ts";
 import { createLogger, requestContext, type LogConfig, type RequestLogContext } from "./logger.ts";
 
-type Handler = (request: Request) => Response | Promise<Response>;
-
 export function createObservedListener(
-  handler: Handler,
+  handler: (request: Request) => Response | Promise<Response>,
   config: LogConfig,
-  options: { trustProxy?: boolean; log?: (line: string) => void } = {},
+  options: {
+    trustProxy?: boolean;
+    trustedProxyIps?: ReadonlySet<string>;
+    log?: (line: string) => void;
+  } = {},
 ): RequestListener {
   const logger = createLogger(config, options.log);
-  const listener = createRequestListener(
-    async (request: Request) => {
-      const context = requestContext.getStore()!;
-      try {
-        const response = await handler(request);
-        context.handlerMs = performance.now() - context.started;
-        const headers = new Headers(response.headers);
-        headers.set("X-Request-ID", context.requestId);
-        if (config.serverTiming !== "off") {
-          const timings = [`app;dur=${context.handlerMs.toFixed(2)}`];
-          if (config.serverTiming === "detailed") {
-            for (const [name, duration] of Object.entries(context.operations))
-              timings.push(`${name};dur=${duration.toFixed(2)}`);
-          }
-          headers.set("Server-Timing", timings.join(", "));
-        } else {
-          headers.delete("Server-Timing");
+  const fetch: FetchHandler = async (request, client) => {
+    const context = requestContext.getStore()!;
+    clientIps.set(request, normalizeIp(client.address));
+    try {
+      const response = await handler(request);
+      context.handlerMs = performance.now() - context.started;
+      const headers = new Headers(response.headers);
+      headers.set("X-Request-ID", context.requestId);
+      if (config.serverTiming !== "off") {
+        const timings = [`app;dur=${context.handlerMs.toFixed(2)}`];
+        if (config.serverTiming === "detailed") {
+          for (const [name, duration] of Object.entries(context.operations))
+            timings.push(`${name};dur=${duration.toFixed(2)}`);
         }
-        return new Response(response.body, {
-          status: response.status,
-          statusText: response.statusText,
-          headers,
-        });
-      } finally {
-        context.handlerMs ??= performance.now() - context.started;
+        headers.set("Server-Timing", timings.join(", "));
+      } else {
+        headers.delete("Server-Timing");
       }
-    },
-    {
-      trustProxy: options.trustProxy,
-      onError(error) {
-        logger("request.error", { error: String(error) }, "error");
-        return new Response("Internal Server Error", { status: 500 });
-      },
-    },
-  );
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    } finally {
+      context.handlerMs ??= performance.now() - context.started;
+    }
+  };
+  function onError(error: unknown) {
+    logger("request.error", { error: String(error) }, "error");
+    return new Response("Internal Server Error", { status: 500 });
+  }
+  const directListener = createRequestListener(fetch, { onError, trustProxy: options.trustProxy });
+  const proxyListener = options.trustedProxyIps?.size
+    ? createRequestListener(fetch, { onError, trustProxy: true })
+    : directListener;
 
   return (request, response) => {
     const context: RequestLogContext = {
@@ -62,7 +65,9 @@ export function createObservedListener(
     }
     const pathname = url.pathname;
     const query: Record<string, string[]> = Object.create(null);
-    for (const [name, value] of url.searchParams) (query[name] ??= []).push(value);
+    for (const [name, value] of url.searchParams) {
+      (query[name] ??= []).push(name === "returnTo" ? "[redacted]" : value);
+    }
     requestContext.run(context, () => {
       response.setHeader("X-Request-ID", context.requestId);
       let recorded = false;
@@ -97,6 +102,8 @@ export function createObservedListener(
       }
       response.once("finish", () => complete(false));
       response.once("close", () => complete(!response.writableFinished));
+      const peer = normalizeIp(request.socket.remoteAddress ?? "");
+      const listener = options.trustedProxyIps?.has(peer) ? proxyListener : directListener;
       listener(request, response);
     });
   };

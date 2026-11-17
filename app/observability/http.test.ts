@@ -3,6 +3,7 @@ import { createServer, get } from "node:http";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, it } from "remix/test";
+import { clientIps, readTrustedProxyIps } from "./client-ip.ts";
 import { createObservedListener } from "./http.ts";
 import { createLogger, measure, readLogConfig } from "./logger.ts";
 
@@ -10,11 +11,13 @@ async function withServer(
   handler: (request: Request) => Response | Promise<Response>,
   env: NodeJS.ProcessEnv,
   check: (url: string, records: Record<string, any>[]) => Promise<void>,
+  trustedProxyIps?: ReadonlySet<string>,
 ) {
   const records: Record<string, any>[] = [];
   const server = createServer(
     createObservedListener(handler, readLogConfig(env), {
       log: (line) => records.push(JSON.parse(line)),
+      trustedProxyIps,
     }),
   );
   server.listen(0, "127.0.0.1");
@@ -32,6 +35,22 @@ async function withServer(
 }
 
 describe("HTTP observability", () => {
+  it("takes a forwarded client IP only from configured proxy peers", async () => {
+    const handler = (request: Request) => new Response(clientIps.get(request));
+    const headers = { "X-Forwarded-For": "2001:0db8:0::1" };
+    await withServer(handler, {}, async (url) => {
+      assert.equal(await (await fetch(url, { headers })).text(), "127.0.0.1");
+    });
+    await withServer(
+      handler,
+      {},
+      async (url) => {
+        assert.equal(await (await fetch(url, { headers })).text(), "2001:db8::1");
+      },
+      readTrustedProxyIps("::ffff:127.0.0.1"),
+    );
+  });
+
   it("correlates concurrent requests, retains parameters unchanged with timing headers disabled", async () => {
     const appLogs: Record<string, any>[] = [];
     await withServer(

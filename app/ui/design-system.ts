@@ -1,5 +1,8 @@
 import { css } from "remix/component";
 
+export const fontStylesheet =
+  "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Instrument+Sans:wght@400..700&display=swap";
+
 export const palette = [
   { name: "Canvas", token: "canvas", light: "#E9E4D7", dark: "#252D24" },
   { name: "Surface", token: "surface", light: "#FCF8EB", dark: "#2F392D" },
