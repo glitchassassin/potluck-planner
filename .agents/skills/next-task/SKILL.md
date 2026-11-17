@@ -4,8 +4,9 @@ description: Identify GitHub issues ready to implement and pull requests ready t
 ---
 
 1. Check for open, unblocked issues, and draft or published pull requests.
-2. Open, unblocked issues that do not have a current thread or pull request are ready to implement.
-3. My draft pull requests, or pull requests created by another user, need to be reviewed.&#x20;
+2. Open, unblocked Feature issues are ready to be broken down into Tasks.
+2. Open, unblocked Task or Bug issues that do not have a current thread or pull request are ready to implement.
+3. My draft pull requests, or pull requests created by another user, need to be reviewed.
 
 The normal workflow:
 
