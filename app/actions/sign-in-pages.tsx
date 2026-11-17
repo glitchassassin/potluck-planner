@@ -33,11 +33,8 @@ export function PhonePage(handle: Handle<PhoneProps>) {
               maxLength={maxPhoneLength}
               value={value}
               aria-invalid={error ? "true" : undefined}
-              aria-describedby={error ? "phone-help phone-error" : "phone-help"}
+              aria-describedby={error ? "phone-error" : undefined}
             />
-            <p id="phone-help" class="potluck-help">
-              Use a US or US territory number that can receive text messages.
-            </p>
             <FieldError id="phone-error" error={error} />
           </div>
           <SubmitButton label="Send code" />
@@ -91,11 +88,11 @@ export function CodePage(handle: Handle<CodeProps>) {
               class="potluck-secondary"
               aria-describedby={resendError ? "resend-error" : undefined}
             >
-              Send another code
+              Resend code
             </button>
           </form>
           <a href={signInHref(returnPath)} class="potluck-secondary">
-            Change phone number
+            Switch phone number
           </a>
         </div>
         <FieldError id="resend-error" error={resendError} />
@@ -110,7 +107,7 @@ export function NamePage(handle: Handle<{ error?: string }>) {
   return () => {
     const { error } = handle.props;
     return (
-      <AuthPage heading="Choose your name">
+      <AuthPage heading="What's your name?">
         <form method="post" action={routes.signIn.name.action.href()} class="auth-form">
           <div class="potluck-field">
             <label for="name" class="potluck-label">
@@ -129,7 +126,7 @@ export function NamePage(handle: Handle<{ error?: string }>) {
             />
             <FieldError id="name-error" error={error} />
           </div>
-          <SubmitButton label="Create account" />
+          <SubmitButton label="Sign Up" />
         </form>
       </AuthPage>
     );

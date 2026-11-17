@@ -21,8 +21,8 @@ test("signup works in the production build with the Verify mock", async ({ page 
   await expect(page.getByText(`We sent a code to (212) ${number}.`)).toBeVisible();
   await page.getByLabel("Verification code").fill("000000");
   await page.getByRole("button", { name: "Verify code" }).click();
-  await expect(page.getByRole("heading", { name: "Choose your name" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What's your name?" })).toBeVisible();
   await page.getByLabel("Name", { exact: true }).fill("Alex");
-  await page.getByRole("button", { name: "Create account" }).click();
+  await page.getByRole("button", { name: "Sign Up" }).click();
   await expect(page.getByRole("heading", { name: "Welcome, Alex" })).toBeVisible();
 });
