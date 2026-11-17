@@ -15,6 +15,7 @@ it("exits with failure after a port conflict even with development asset watchin
       ...process.env,
       NODE_ENV: "development",
       PORT: String(address.port),
+      DATABASE_PATH: ":memory:",
       LOG_LEVEL: "info",
       REMIX_NODE_HMR: "",
     },
