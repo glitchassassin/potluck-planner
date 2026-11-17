@@ -13,6 +13,12 @@ import { createAppRouter } from "../router.ts";
 
 const phone = "+1 212-555-0142";
 const day = 24 * 60 * 60_000;
+const maximumName = "a".repeat(100);
+const invalidNames = [
+  ["", /Enter the name/],
+  [" \t\n ", /Enter the name/],
+  [`  ${maximumName}a  `, /Use 100 characters or fewer/],
+] as const;
 
 async function fixture() {
   const db = openDatabase(":memory:");
@@ -108,7 +114,12 @@ describe("sign-in controller", () => {
     assert.equal(location(await browser.request("/")), "/sign-in");
 
     const signupCookie = browser.cookieHeader();
-    const valid = await browser.request("/sign-in/name", { name: "  Alex  " });
+    for (const [name, message] of invalidNames) {
+      const invalid = await browser.request("/sign-in/name", { name });
+      assert.equal(invalid.status, 400);
+      assert.match(await invalid.text(), message);
+    }
+    const valid = await browser.request("/sign-in/name", { name: `  ${maximumName}  ` });
     assert.equal(location(valid), "/");
     const sessionCookie = valid.headers
       .getSetCookie()
@@ -119,8 +130,8 @@ describe("sign-in controller", () => {
     const home = await browser.request("/");
     assert.equal(home.status, 200);
     assert.equal(home.headers.get("Cache-Control"), "no-store");
-    assert.match(await home.text(), /Welcome, Alex/);
-    assert.equal((await findAccountByPhone(app.db, phone))?.name, "Alex");
+    assert.ok((await home.text()).includes(`Welcome, ${maximumName}`));
+    assert.equal((await findAccountByPhone(app.db, phone))?.name, maximumName);
     const replay = await app
       .browser()
       .request("/sign-in/name", { name: "Other name" }, { Cookie: signupCookie });
@@ -289,5 +300,78 @@ describe("sign-in controller", () => {
       { Cookie: browser.cookieHeader() },
     );
     assert.equal(location(checked), "/sign-in/name");
+  });
+});
+
+describe("profile controller", () => {
+  it("requires a current session to view or save the profile", async () => {
+    await using app = await fixture();
+    const browser = app.browser();
+    const account = await createAccount(app.db, { verifiedPhoneNumber: phone, name: "Alex" });
+    assert.ok(account);
+
+    const signIn = "/sign-in?returnTo=%2Fprofile";
+    const edit = { name: "Sam" };
+    assert.equal(location(await browser.request("/profile")), signIn);
+    assert.equal(location(await browser.request("/profile", edit)), signIn);
+
+    assert.equal(
+      location(await browser.request("/sign-in", { phone, returnTo: "/profile" })),
+      "/sign-in/code",
+    );
+    assert.equal(location(await browser.request("/sign-in/code", { code: "000000" })), "/profile");
+    assert.equal((await browser.request("/profile")).status, 200);
+
+    app.advance(30 * day);
+    assert.equal(location(await browser.request("/profile")), signIn);
+    assert.equal(location(await browser.request("/profile", edit)), signIn);
+    assert.deepEqual(await findAccountByPhone(app.db, phone), account);
+  });
+
+  it("shows the saved name, validates edits, and updates only the session's account", async () => {
+    await using app = await fixture();
+    const browser = app.browser();
+    const otherPhone = "+1 202-555-0142";
+    const account = await createAccount(app.db, { verifiedPhoneNumber: phone, name: "Alex" });
+    const other = await createAccount(app.db, {
+      verifiedPhoneNumber: otherPhone,
+      name: maximumName,
+    });
+    assert.ok(account && other);
+
+    await browser.request("/sign-in", { phone });
+    assert.equal(location(await browser.request("/sign-in/code", { code: "000000" })), "/");
+    assert.match(await (await browser.request("/")).text(), /href="\/profile"[^>]*>Profile<\/a>/);
+    const profile = await browser.request("/profile");
+    assert.equal(profile.status, 200);
+    assert.equal(profile.headers.get("Cache-Control"), "no-store");
+    assert.match(await profile.text(), /<input[^>]*name="name"[^>]*value="Alex"/);
+
+    for (const [name, message] of invalidNames) {
+      const invalid = await browser.request("/profile", { name });
+      assert.equal(invalid.status, 400);
+      const html = await invalid.text();
+      assert.match(html, /aria-describedby="name-error"/);
+      assert.match(html, message);
+    }
+    assert.deepEqual(await findAccountByPhone(app.db, phone), account);
+
+    const saved = await browser.request("/profile", {
+      name: "  Sam  ",
+      accountId: other.id,
+      verifiedPhoneNumber: other.verifiedPhoneNumber,
+    });
+    assert.equal(location(saved), "/profile");
+    assert.match(await (await browser.request("/profile")).text(), /name="name"[^>]*value="Sam"/);
+    assert.match(await (await browser.request("/")).text(), /Welcome, Sam/);
+    assert.deepEqual(await findAccountByPhone(app.db, phone), { ...account, name: "Sam" });
+    assert.deepEqual(await findAccountByPhone(app.db, otherPhone), other);
+
+    assert.equal(
+      location(await browser.request("/profile", { name: `  ${maximumName}  ` })),
+      "/profile",
+    );
+    assert.deepEqual(await findAccountByPhone(app.db, phone), { ...account, name: other.name });
+    assert.deepEqual(await findAccountByPhone(app.db, otherPhone), other);
   });
 });

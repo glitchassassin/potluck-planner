@@ -1,12 +1,13 @@
 import { createAction, createController, type Middleware } from "remix/router";
 
+import { validateAccountName } from "../auth/accounts.ts";
 import { formatPhoneNumber, parsePhoneNumber } from "../auth/phone.ts";
 import { authRedirect, safeReturnPath, signInHref } from "../auth/route-guard.ts";
 import type { createSessions } from "../auth/sessions.ts";
 import type { createSignInLimits } from "../auth/sign-in-limits.ts";
 import type { createSmsVerificationService } from "../auth/sms-verification.ts";
 import { routes } from "../routes.ts";
-import { CodePage, maxNameLength, maxPhoneLength, NamePage, PhonePage } from "./sign-in-pages.tsx";
+import { CodePage, maxPhoneLength, NamePage, PhonePage } from "./sign-in-pages.tsx";
 
 export interface SignInDependencies {
   sessions: ReturnType<typeof createSessions>;
@@ -144,11 +145,8 @@ export function createSignInController({ sessions, sms, limit, now }: SignInDepe
           const returnPath = await sessions.readReturnPath(context.request);
           if (!flow?.verified) return authRedirect(signInHref(returnPath));
 
-          const name = formValue(context.formData, "name").trim();
-          if (name.length === 0 || name.length > maxNameLength) {
-            const error = name
-              ? `Use ${maxNameLength} characters or fewer.`
-              : "Enter the name you'd like others to see.";
+          const { name, error } = validateAccountName(context.formData.get("name"));
+          if (error) {
             return context.render(<NamePage error={error} />, { status: 400 });
           }
           const cookies = await sessions.finishSignup(flow, name);
