@@ -17,7 +17,7 @@ import {
 describe("accounts", () => {
   it("persists one account per canonical number and permits duplicate names", async () => {
     await using directory = await mkdtempDisposable(join(tmpdir(), "potluck-accounts-"));
-    const filename = join(directory.path, "app.sqlite");
+    const filename = join(directory.path, "new-data-folder", "accounts", "app.sqlite");
     const db = openDatabase(filename);
     let account;
     try {

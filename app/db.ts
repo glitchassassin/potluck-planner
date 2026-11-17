@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { loadMigrations } from "remix/data-table/migrations/node";
 import { createSqliteDatabase, type SqliteDatabase } from "remix/data-table/sqlite";
 
@@ -9,8 +10,14 @@ const { adapter, migrations } = remixConfig.db;
 export function openDatabase(
   filename = process.env[adapter.filename.env] || adapter.filename.default,
 ): SqliteDatabase {
+  const databaseFilename =
+    filename === ":memory:" ? filename : resolve(import.meta.dirname, "..", filename);
+  if (databaseFilename !== ":memory:") {
+    mkdirSync(dirname(databaseFilename), { recursive: true });
+  }
+
   return createSqliteDatabase({
-    filename: filename === ":memory:" ? filename : resolve(import.meta.dirname, "..", filename),
+    filename: databaseFilename,
     foreignKeys: adapter.foreignKeys,
     busyTimeout: adapter.busyTimeout,
   });
