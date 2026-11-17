@@ -8,8 +8,9 @@ RUN npm run build
 FROM node:24.15.0-bookworm-slim AS runtime
 ENV NODE_ENV=production PORT=44100 DATABASE_PATH=/data/app.sqlite
 WORKDIR /app
-COPY --from=build --chown=node:node /app/dist/ ./
+COPY --chown=node:node package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force && mkdir /data && chown node:node /data
+COPY --from=build --chown=node:node /app/dist/ ./
 USER node
 VOLUME ["/data"]
 EXPOSE 44100
