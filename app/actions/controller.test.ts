@@ -4,7 +4,7 @@ import { get } from "remix/routes";
 import { describe, it } from "remix/test";
 
 import { createTwilioVerifyMock } from "../../dev/twilio-verify-mock.ts";
-import { createAccount, findAccountByPhone } from "../auth/accounts.ts";
+import { createAccount, findAccountByPhone, setHostGrant } from "../auth/accounts.ts";
 import { requireAccount, safeReturnPath } from "../auth/route-guard.ts";
 import { createSessions } from "../auth/sessions.ts";
 import { migrateDatabase, openDatabase } from "../db.ts";
@@ -208,6 +208,52 @@ describe("sign-in controller", () => {
     assert.equal((await second.request("/")).status, 200);
     app.advance(1);
     assert.equal(location(await second.request("/")), "/sign-in");
+  });
+
+  it("uses current Host and Admin permissions on every request in the same session", async () => {
+    await using app = await fixture();
+    const account = await createAccount(app.db, { verifiedPhoneNumber: phone, name: "Alex" });
+    assert.ok(account);
+    app.router.get("/account-permissions", {
+      middleware: [requireAccount(createSessions(app.db, { now: app.now }))],
+      handler({ account }) {
+        return Response.json(account.permissions);
+      },
+    });
+
+    const browser = app.browser();
+    assert.equal(location(await browser.request("/sign-in", { phone })), "/sign-in/code");
+    assert.equal(location(await browser.request("/sign-in/code", { code: "000000" })), "/");
+    const sessionCookie = browser.cookieHeader();
+    async function readPermissions() {
+      const response = await browser.request("/account-permissions");
+      assert.equal(response.status, 200);
+      assert.equal(browser.cookieHeader(), sessionCookie);
+      return response.json();
+    }
+
+    const previous = process.env.ADMIN_PHONE_ALLOWLIST;
+    try {
+      const user = { isHost: false, isAdmin: false, canCreateEvents: false };
+      const host = { isHost: true, isAdmin: false, canCreateEvents: true };
+      const admin = { isHost: false, isAdmin: true, canCreateEvents: true };
+      process.env.ADMIN_PHONE_ALLOWLIST = "";
+      assert.deepEqual(await readPermissions(), user);
+      await setHostGrant(app.db, account.id, true);
+      assert.deepEqual(await readPermissions(), host);
+      await setHostGrant(app.db, account.id, false);
+      assert.deepEqual(await readPermissions(), user);
+
+      process.env.ADMIN_PHONE_ALLOWLIST = phone;
+      assert.deepEqual(await readPermissions(), admin);
+      await setHostGrant(app.db, account.id, true);
+      assert.deepEqual(await readPermissions(), { ...admin, isHost: true });
+      await setHostGrant(app.db, account.id, false);
+      assert.deepEqual(await readPermissions(), admin);
+    } finally {
+      if (previous === undefined) delete process.env.ADMIN_PHONE_ALLOWLIST;
+      else process.env.ADMIN_PHONE_ALLOWLIST = previous;
+    }
   });
 
   it("discards external return URLs supplied with the phone form", async () => {

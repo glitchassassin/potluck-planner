@@ -3,7 +3,10 @@ import { execFile } from "node:child_process";
 import { mkdtempDisposable } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { sql } from "remix/data-table";
+import { loadMigrations } from "remix/data-table/migrations/node";
 import { describe, it } from "remix/test";
 
 import { migrateDatabase, openDatabase } from "../db.ts";
@@ -12,6 +15,7 @@ import {
   findAccountByPhone,
   readAdminPhoneAllowlist,
   resolveAccountRole,
+  setHostGrant,
 } from "./accounts.ts";
 
 describe("accounts", () => {
@@ -104,6 +108,49 @@ describe("accounts", () => {
       assert.equal((await findAccountByPhone(db, "2125550142"))?.id, ids[0]);
     } finally {
       await db.close();
+    }
+  });
+
+  it("migrates existing accounts without Host grants and persists grant changes across restarts", async () => {
+    await using directory = await mkdtempDisposable(join(tmpdir(), "potluck-accounts-"));
+    const filename = join(directory.path, "app.sqlite");
+    const migrations = await loadMigrations(
+      fileURLToPath(new URL("../../db/migrations", import.meta.url)),
+    );
+    const grantedAccounts = sql`SELECT id FROM accounts WHERE has_host_grant = 1`;
+    const db = openDatabase(filename);
+    let account;
+    try {
+      await db.migrate(migrations, { to: "0004" });
+      account = await createAccount(db, { verifiedPhoneNumber: "+12125550142", name: "Alex" });
+      assert.ok(account);
+
+      await migrateDatabase(db);
+      assert.deepEqual(await findAccountByPhone(db, account.verifiedPhoneNumber), account);
+      assert.ok(await createAccount(db, { verifiedPhoneNumber: "+12125550143", name: "Alex" }));
+      assert.deepEqual((await db.exec(grantedAccounts)).rows, []);
+
+      assert.equal(await setHostGrant(db, "unknown-account", true), false);
+      assert.equal(await setHostGrant(db, account.id, true), true);
+    } finally {
+      await db.close();
+    }
+
+    const reopened = openDatabase(filename);
+    try {
+      await migrateDatabase(reopened);
+      assert.deepEqual((await reopened.exec(grantedAccounts)).rows, [{ id: account.id }]);
+      assert.equal(await setHostGrant(reopened, account.id, false), true);
+    } finally {
+      await reopened.close();
+    }
+
+    const restarted = openDatabase(filename);
+    try {
+      await migrateDatabase(restarted);
+      assert.deepEqual((await restarted.exec(grantedAccounts)).rows, []);
+    } finally {
+      await restarted.close();
     }
   });
 
