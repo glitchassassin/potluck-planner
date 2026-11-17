@@ -62,6 +62,7 @@ it("maps provider limits, terminal verifications, and destination and delivery f
     Response.json({ code: 60605 }, { status: 403 }),
     Response.json({ code: 60203 }, { status: 429 }),
     Response.json({ code: 60410 }, { status: 403 }),
+    Response.json({ code: 30003 }, { status: 400 }),
     Response.json({ status: "failed" }),
     Response.json({ code: 60202 }, { status: 429 }),
     Response.json({ code: 20404 }, { status: 404 }),
@@ -78,6 +79,7 @@ it("maps provider limits, terminal verifications, and destination and delivery f
   assert.deepEqual(await client.send(phone), { status: "unsupported_destination" });
   assert.deepEqual(await client.send(phone), { status: "unsupported_destination" });
   assert.deepEqual(await client.send(phone), { status: "rate_limited" });
+  assert.deepEqual(await client.send(phone), { status: "temporarily_blocked" });
   assert.deepEqual(await client.send(phone), { status: "delivery_failed" });
   assert.deepEqual(await client.send(phone), { status: "delivery_failed" });
   assert.equal(await client.check(sid, code), "attempt_limit");

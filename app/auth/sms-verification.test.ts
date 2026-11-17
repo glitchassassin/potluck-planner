@@ -13,6 +13,7 @@ import type { VerifyClient } from "./twilio-verify.ts";
 const phone = "+12125550142";
 const correctCode = "012345";
 const verificationSid = "VE" + "0".repeat(32);
+const replacementSid = "VE" + "1".repeat(32);
 const start = Date.parse("2026-11-16T12:00:00Z");
 const expiry = start + 600_000;
 
@@ -47,7 +48,9 @@ async function fixture(
     const client: VerifyClient = {
       async send(to) {
         sent.push(to);
-        return { status: "pending", sid: verificationSid, createdAt: time < expiry ? start : time };
+        return time < expiry
+          ? { status: "pending", sid: verificationSid, createdAt: start }
+          : { status: "pending", sid: replacementSid, createdAt: time };
       },
       async check(sid, code) {
         checked.push(sid);
@@ -142,6 +145,57 @@ it("preserves the original expiry and failed-attempt count on resend", async () 
   });
 });
 
+it("uses the new SID and resets attempts when a resend creates a verification across expiry", async () => {
+  await fixture(async ({ db, client, checked, now, advanceTo }) => {
+    const first = createSmsVerificationService(db, { client, now });
+    await first.send(phone);
+    await first.check(phone, "222222");
+
+    advanceTo(expiry - 1_000);
+    const newCreatedAt = expiry + 1_000;
+    const resendClient: VerifyClient = {
+      ...client,
+      async send(to) {
+        advanceTo(newCreatedAt);
+        return client.send(to);
+      },
+    };
+    const service = createSmsVerificationService(db, { client: resendClient, now });
+    const resent = await service.send(phone);
+    assert.equal(resent.status, "sent");
+    assert.equal(resent.expiresAt, newCreatedAt + 600_000);
+    const wrong = await service.check(phone, "222222");
+    assert.equal(wrong.status, "incorrect_code");
+    assert.equal(wrong.remainingAttempts, 4);
+    assert.equal((await service.check(phone, correctCode)).status, "verified");
+    assert.deepEqual(checked, [verificationSid, replacementSid, replacementSid]);
+  });
+});
+
+it("reports expiry when the same SID comes back after its original expiry", async () => {
+  await fixture(async ({ db, client, checked, now, advanceTo }) => {
+    const first = createSmsVerificationService(db, { client, now });
+    await first.send(phone);
+
+    advanceTo(expiry - 1_000);
+    const lateClient: VerifyClient = {
+      ...client,
+      async send(to) {
+        const response = await client.send(to);
+        advanceTo(expiry);
+        return response;
+      },
+    };
+    const service = createSmsVerificationService(db, { client: lateClient, now });
+    const result = await service.send(phone);
+    assert.equal(result.status, "expired");
+    assert.equal(result.retryAt, expiry + 59_000);
+    assert.equal((await service.check(phone, correctCode)).status, "no_active_verification");
+    assert.equal((await service.send(phone)).status, "cooldown");
+    assert.deepEqual(checked, []);
+  });
+});
+
 it("invalidates a code after five incorrect checks and allows a new code at expiry", async () => {
   await fixture(async ({ db, client, sent, checked, now, advanceTo }) => {
     const service = createSmsVerificationService(db, { client, now });
@@ -166,6 +220,28 @@ it("invalidates a code after five incorrect checks and allows a new code at expi
     const wrongForNewCode = await service.check(phone, "222222");
     assert.equal(wrongForNewCode.status, "incorrect_code");
     assert.equal(wrongForNewCode.remainingAttempts, 4);
+  });
+});
+
+it("reports the later cooldown deadline when five failed checks follow a late resend", async () => {
+  await fixture(async ({ db, client, now, advanceTo }) => {
+    const service = createSmsVerificationService(db, { client, now });
+    await service.send(phone);
+    advanceTo(expiry - 10_000);
+    assert.equal((await service.send(phone)).status, "sent");
+
+    for (let attempt = 0; attempt < 4; attempt++) await service.check(phone, "222222");
+    const exhausted = await service.check(phone, "222222");
+    assert.equal(exhausted.status, "attempt_limit");
+    assert.equal(exhausted.retryAt, expiry + 50_000);
+    assert.deepEqual(await service.send(phone), exhausted);
+
+    advanceTo(expiry);
+    const cooldown = await service.send(phone);
+    assert.equal(cooldown.status, "cooldown");
+    assert.equal(cooldown.retryAt, exhausted.retryAt);
+    advanceTo(exhausted.retryAt);
+    assert.equal((await service.send(phone)).status, "sent");
   });
 });
 
@@ -235,5 +311,19 @@ it("rejects raw phone input and malformed codes at the service boundary", async 
     assert.equal((await service.check(phone, "abc")).status, "invalid_code");
     assert.deepEqual(sent, [phone]);
     assert.deepEqual(checked, []);
+  });
+});
+
+it("returns open-ended retry feedback for a temporary provider block", async () => {
+  await fixture(async ({ db, client, now }) => {
+    const blocked: VerifyClient = {
+      ...client,
+      send: async () => ({ status: "temporarily_blocked" }),
+    };
+    const service = createSmsVerificationService(db, { client: blocked, now });
+    assert.deepEqual(await service.send(phone), {
+      status: "temporarily_blocked",
+      message: "SMS verification is temporarily unavailable for this number. Try again later.",
+    });
   });
 });

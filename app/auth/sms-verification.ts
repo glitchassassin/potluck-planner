@@ -17,12 +17,15 @@ const operationLeaseMs = 3 * verifyRequestTimeoutMs;
 const messages = {
   unsupported_destination: "Use a phone number that can receive SMS.",
   delivery_failed: "We couldn't send the code. Check the number and try again in a minute.",
+  temporarily_blocked:
+    "SMS verification is temporarily unavailable for this number. Try again later.",
   rate_limited: "SMS verification is temporarily rate limited. Wait a few minutes and try again.",
   unavailable: "SMS verification is temporarily unavailable. Try again in a minute.",
   cooldown: "Wait before requesting another code.",
+  expired: "This verification code has expired. Wait before requesting another one.",
   busy: "A verification request is in progress. Try again shortly.",
   no_active_verification: "Request a new verification code.",
-  attempt_limit: "Too many incorrect codes. Wait for this code to expire, then request a new one.",
+  attempt_limit: "Too many incorrect codes. Wait before requesting a new code.",
   incorrect_code: "That code is incorrect. Check the SMS and try again.",
   invalid_code: "Enter the numeric code from the SMS.",
 };
@@ -37,6 +40,7 @@ type AttemptLimit = Failure<"attempt_limit"> & { retryAt: number };
 export type SendSmsResult =
   | { status: "sent"; expiresAt: number; retryAt: number }
   | (Failure<"cooldown"> & { retryAt: number })
+  | (Failure<"expired"> & { retryAt: number })
   | AttemptLimit
   | Failure<VerifyFailure | "busy">;
 
@@ -112,14 +116,17 @@ export function createSmsVerificationService(
       const response = await client.send(phoneE164);
       let result: SendSmsResult;
       if (response.status === "pending") {
-        if (!state.verification_sid || state.expires_at === null || state.expires_at <= startedAt) {
+        // Twilio can start a new verification while a resend crosses the old one's expiry.
+        if (state.verification_sid !== response.sid || state.expires_at === null) {
+          state.verification_sid = response.sid;
           state.expires_at = response.createdAt + validityMs;
           state.failed_attempts = 0;
         }
-        state.verification_sid = response.sid;
-        result = { status: "sent", expiresAt: state.expires_at, retryAt: state.next_send_at };
+        result =
+          state.expires_at > now()
+            ? { status: "sent", expiresAt: state.expires_at, retryAt: state.next_send_at }
+            : { ...failure("expired"), retryAt: state.next_send_at };
       } else if (response.status === "attempt_limit") {
-        state.verification_sid = null;
         state.failed_attempts =
           state.expires_at !== null && state.expires_at > startedAt ? maxAttempts : 0;
         result = attemptLimit(state, startedAt) ?? failure("rate_limited");
@@ -171,9 +178,7 @@ export function createSmsVerificationService(
         case "attempt_limit": {
           state.failed_attempts =
             response === "attempt_limit" ? maxAttempts : state.failed_attempts + 1;
-          const limit = attemptLimit(state, startedAt);
-          if (limit) state.verification_sid = null;
-          result = limit ?? {
+          result = attemptLimit(state, startedAt) ?? {
             ...failure("incorrect_code"),
             remainingAttempts: maxAttempts - state.failed_attempts,
           };
@@ -189,7 +194,7 @@ export function createSmsVerificationService(
 
 function attemptLimit(state: Verification | undefined, now: number): AttemptLimit | undefined {
   if (state?.expires_at != null && state.expires_at > now && state.failed_attempts >= maxAttempts) {
-    return { ...failure("attempt_limit"), retryAt: state.expires_at };
+    return { ...failure("attempt_limit"), retryAt: Math.max(state.expires_at, state.next_send_at) };
   }
 }
 

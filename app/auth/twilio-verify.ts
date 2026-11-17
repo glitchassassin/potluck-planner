@@ -9,6 +9,7 @@ export type VerifyFailure =
   | "unsupported_destination"
   | "rate_limited"
   | "delivery_failed"
+  | "temporarily_blocked"
   | "unavailable";
 
 export interface VerifyClient {
@@ -148,12 +149,13 @@ function mapFailure({ httpStatus, providerCode }: RequestFailure): VerifyFailure
     case 60624:
     case 60626:
       return "rate_limited";
+    case 60410: // Fraud Guard
+      return "temporarily_blocked";
     case 30003: // Unreachable handset
     case 30005: // Unknown destination handset
     case 30006: // Unreachable destination carrier
     case 30007: // Message filtered
     case 60238: // Verification blocked by Twilio
-    case 60410: // Delivery attempt blocked
       return "delivery_failed";
     default:
       return httpStatus === 429 ? "rate_limited" : "unavailable";
