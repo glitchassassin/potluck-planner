@@ -18,7 +18,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps --only-shell chromium
       - run: npm ci --prefix dist --omit=dev
       - run: npm run test:e2e
       - run: docker build -t potluck-planner .
@@ -65,3 +65,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,scope=publish,mode=max,ignore-error=true
