@@ -18,7 +18,7 @@ If you deploy behind a reverse proxy, set `TRUSTED_PROXY_IPS` to the proxy IP ad
 
 ## Development
 
-Use Node 24 and npm. Export any configuration overrides in your shell before starting the server. Use the variable names listed in `.env.example`.
+Use Node 24 and npm. Put local configuration overrides in `.env` using the variable names in `.env.example`.
 
 ```sh
 nvm use
