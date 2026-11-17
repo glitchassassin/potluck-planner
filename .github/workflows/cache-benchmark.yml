@@ -1,0 +1,304 @@
+name: Docker cache benchmark
+on:
+  push:
+    branches: [ci-benchmark/25-docker-cache]
+permissions:
+  contents: read
+jobs:
+  checks-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm ci --prefix dist --omit=dev
+      - run: npm run test:e2e
+      - run: docker build -t potluck-planner .
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-test-results
+          path: test-results/
+  checks-shell-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npx playwright install --with-deps --only-shell chromium
+      - run: npm ci --prefix dist --omit=dev
+      - run: npm run test:e2e
+      - run: docker build -t potluck-planner .
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-test-results
+          path: test-results/
+  publish-baseline:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}-ci-benchmark
+          tags: |
+            type=raw,value=trial-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+            type=raw,value=sha-${{ github.sha }}-${{ github.job }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build and publish container
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+  checks-cold:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm ci --prefix dist --omit=dev
+      - run: npm run test:e2e
+      - name: Prepare Docker build context
+        run: |
+          cp .github/cache-benchmark.Dockerfile Dockerfile
+      - uses: docker/setup-buildx-action@v4
+      - name: Build container
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: potluck-planner
+          cache-from: type=gha,scope=trial-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-to: type=gha,scope=trial-pr-${{ github.run_id }}-${{ github.run_attempt }},mode=max
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-test-results
+          path: test-results/
+  publish-cold:
+    needs: publish-baseline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}-ci-benchmark
+          tags: |
+            type=raw,value=trial-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+            type=raw,value=sha-${{ github.sha }}-${{ github.job }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Prepare Docker build context
+        run: |
+          cp .github/cache-benchmark.Dockerfile Dockerfile
+      - name: Build and publish container
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=trial-publish-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-to: type=gha,scope=trial-publish-${{ github.run_id }}-${{ github.run_attempt }},mode=max
+  checks-warm:
+    needs: checks-cold
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm ci --prefix dist --omit=dev
+      - run: npm run test:e2e
+      - name: Prepare Docker build context
+        run: |
+          cp .github/cache-benchmark.Dockerfile Dockerfile
+          printf '\n// Docker cache benchmark\n' >> app/router.ts
+      - uses: docker/setup-buildx-action@v4
+      - name: Build container
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: potluck-planner
+          cache-from: type=gha,scope=trial-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-to: type=gha,scope=trial-pr-${{ github.run_id }}-${{ github.run_attempt }},mode=max
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-test-results
+          path: test-results/
+  publish-warm:
+    needs: publish-cold
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}-ci-benchmark
+          tags: |
+            type=raw,value=trial-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+            type=raw,value=sha-${{ github.sha }}-${{ github.job }}
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Prepare Docker build context
+        run: |
+          cp .github/cache-benchmark.Dockerfile Dockerfile
+          printf '\n// Docker cache benchmark\n' >> app/router.ts
+      - name: Build and publish container
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=trial-publish-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-to: type=gha,scope=trial-publish-${{ github.run_id }}-${{ github.run_attempt }},mode=max
+  checks-lockfile:
+    needs: checks-warm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prepare Docker build context
+        run: |
+          cp .github/cache-benchmark.Dockerfile Dockerfile
+          printf '\n' >> package-lock.json
+      - uses: docker/setup-buildx-action@v4
+      - name: Build container
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: potluck-planner
+          cache-from: type=gha,scope=trial-pr-${{ github.run_id }}-${{ github.run_attempt }}
+  publish-lockfile:
+    needs: publish-warm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4
+      - name: Prepare Docker build context
+        run: |
+          cp .github/cache-benchmark.Dockerfile Dockerfile
+          printf '\n' >> package-lock.json
+      - name: Build both platforms
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=/tmp/lockfile-image.tar
+          cache-from: type=gha,scope=trial-publish-${{ github.run_id }}-${{ github.run_attempt }}
+  verify-images:
+    needs: publish-warm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify the pushed index and run both image variants
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}-ci-benchmark:trial-${{ github.run_id }}-${{ github.run_attempt }}-publish-warm
+        run: |
+          docker buildx imagetools inspect "$IMAGE"
+          docker buildx imagetools inspect --raw "$IMAGE" |
+            jq -e '[.manifests[].platform | select(.os == "linux") | .architecture] | sort == ["amd64", "arm64"]'
+          for platform in amd64 arm64; do
+            expected_arch="$platform"
+            if [ "$platform" = amd64 ]; then
+              expected_arch=x64
+            fi
+            docker run --rm --platform "linux/$platform" --entrypoint node "$IMAGE" -p process.arch | grep -Fx "$expected_arch"
+            container=$(docker run -d --platform "linux/$platform" -p 127.0.0.1::44100 "$IMAGE")
+            port=$(docker port "$container" 44100/tcp | cut -d: -f2)
+            result=0
+            curl --retry 15 --retry-connrefused --retry-delay 1 -fsS "http://127.0.0.1:$port/" -o /dev/null || result=$?
+            docker logs "$container"
+            docker rm -f "$container"
+            test "$result" -eq 0
+          done
