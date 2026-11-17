@@ -45,3 +45,47 @@ export function AuthPage(handle: Handle<PageProps>) {
     );
   };
 }
+
+export function NameField(handle: Handle<{ value?: string; error?: string }>) {
+  return () => {
+    const { value, error } = handle.props;
+    return (
+      <div class="potluck-field">
+        <label for="name" class="potluck-label">
+          Name
+        </label>
+        <input
+          class="potluck-input"
+          id="name"
+          name="name"
+          type="text"
+          autocomplete="name"
+          required
+          value={value}
+          aria-invalid={error ? "true" : undefined}
+          aria-describedby={error ? "name-error" : undefined}
+        />
+        <FieldError id="name-error" error={error} />
+      </div>
+    );
+  };
+}
+
+export function FieldError(handle: Handle<{ id: string; error?: string }>) {
+  return () => {
+    const { id, error } = handle.props;
+    return error ? (
+      <p id={id} class="potluck-error" role="alert">
+        {error}
+      </p>
+    ) : null;
+  };
+}
+
+export function SubmitButton(handle: Handle<{ label: string }>) {
+  return () => (
+    <button type="submit" class="potluck-button potluck-button--full">
+      {handle.props.label}
+    </button>
+  );
+}

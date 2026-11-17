@@ -6,6 +6,7 @@ import { staticFiles } from "remix/middleware/static";
 import { createRouter, type RouterContext } from "remix/router";
 
 import { createHomeAction, serveAsset } from "./actions/controller.tsx";
+import { createProfileController } from "./actions/profile-controller.tsx";
 import { createSignInController } from "./actions/sign-in-controller.tsx";
 import { assets } from "./assets.ts";
 import { createSessions } from "./auth/sessions.ts";
@@ -39,6 +40,7 @@ export async function createAppRouter({
 
   router.map(routes.assets, serveAsset);
   router.map(routes.home, createHomeAction(sessions));
+  router.map(routes.profile, createProfileController(db, sessions));
   router.map(routes.signIn.phone, signIn.phone);
   router.map(routes.signIn.code, signIn.code);
   router.map(routes.signIn.resend, signIn.resend);
