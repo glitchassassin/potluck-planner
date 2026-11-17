@@ -23,6 +23,7 @@ describe("phone numbers", () => {
     for (const nationalNumber of [
       "9075550142", // Alaska
       "8085550142", // Hawaii
+      "4655550142", // New York overlay
       "2025550142", // D.C.
       "7875550142", // Puerto Rico
       "9395550142", // Puerto Rico overlay
@@ -50,6 +51,7 @@ describe("phone numbers", () => {
       "999-555-0142",
       "+1 (416) 555-0142", // Canada
       "+1 (876) 210-1234", // Jamaica
+      "+1 (710) 555-0142", // U.S. government non-geographic code
       "+1 (800) 555-0142", // toll-free
     ]) {
       assert.equal(parsePhoneNumber(input), null, input);

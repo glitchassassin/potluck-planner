@@ -18,7 +18,6 @@
     "db:rollback": "remix db rollback"
   },
   "dependencies": {
-    "libphonenumber-js": "^1.13.8",
     "remix": "^3.2.0"
   },
   "devDependencies": {

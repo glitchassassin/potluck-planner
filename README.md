@@ -15,8 +15,6 @@ docker run -d --name potluck-planner --restart unless-stopped \
 
 The app is available on port `44100`, with data stored in `/data`.
 
-The server applies pending SQLite migrations on startup. Set `ADMIN_PHONE_ALLOWLIST` to a comma-separated list of verified phone numbers that should have Admin access. Blank and invalid entries are ignored. Leaving the variable empty grants no Admin access.
-
 ## Development
 
 Use Node 24 and npm:

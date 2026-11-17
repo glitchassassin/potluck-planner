@@ -1,7 +1,5 @@
-import parsePhoneNumberFromString from "libphonenumber-js/max";
-import type { CountryCode } from "libphonenumber-js/max";
+import { usAreaCodes } from "./us-area-codes.ts";
 
-const supportedRegions = new Set<CountryCode>(["US", "PR", "VI", "GU", "AS", "MP"]);
 const phoneSyntax =
   /^(?:\+?1 *(?:[.-] *)?)?(?:\([2-9]\d{2}\)|[2-9]\d{2}) *(?:[.-] *)?[2-9](?!11)\d{2} *(?:[.-] *)?\d{4}$/;
 
@@ -12,23 +10,11 @@ export function parsePhoneNumber(input: string): string | null {
   }
 
   const nationalNumber = text.replace(/\D/g, "").slice(-10);
-  const phone = parsePhoneNumberFromString(`+1${nationalNumber}`);
-  if (!phone?.country || !supportedRegions.has(phone.country)) {
+  if (!usAreaCodes.has(nationalNumber.slice(0, 3))) {
     return null;
   }
 
-  // Shared NANP service codes, such as toll-free numbers, have no geographic assignment.
-  const type = phone.getType();
-  if (
-    type !== "FIXED_LINE_OR_MOBILE" &&
-    type !== "FIXED_LINE" &&
-    type !== "MOBILE" &&
-    type !== "VOIP"
-  ) {
-    return null;
-  }
-
-  return phone.number;
+  return `+1${nationalNumber}`;
 }
 
 export function formatPhoneNumber(input: string): string | null {
