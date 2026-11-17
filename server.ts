@@ -1,4 +1,5 @@
 import * as http from "node:http";
+import { migrateDatabase, openDatabase } from "./app/db.ts";
 import { createObservedListener } from "./app/observability/http.ts";
 import { createLogger, readLogConfig } from "./app/observability/logger.ts";
 
@@ -13,6 +14,9 @@ const isHmr = process.env.REMIX_NODE_HMR === "1";
 
 const config = readLogConfig();
 const logger = createLogger(config);
+const db = openDatabase();
+await migrateDatabase(db);
+
 const server = http.createServer(
   createObservedListener(router.fetch, config, { trustProxy: isHmr }),
 );
@@ -34,7 +38,9 @@ function shutdown(exitCode = 0) {
 
   shuttingDown = true;
   logger("server.stopping", {}, "info");
-  server.close(() => assets.close().finally(() => process.exit(exitCode)));
+  server.close(() =>
+    Promise.all([db.close(), assets.close()]).finally(() => process.exit(exitCode)),
+  );
   server.closeAllConnections();
 }
 
