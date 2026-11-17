@@ -12,10 +12,12 @@ export async function startServer({
   verifyClient = createTwilioVerifyClient(),
   databasePath,
   host,
+  createRouter = createAppRouter,
 }: {
   verifyClient?: VerifyClient;
   databasePath?: string;
   host?: string;
+  createRouter?: typeof createAppRouter;
 } = {}) {
   const port = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 44100;
   const hmrProxyPort = process.env.HMR_PROXY_PORT
@@ -28,7 +30,7 @@ export async function startServer({
   const trustedProxyIps = readTrustedProxyIps();
   const db = openDatabase(databasePath);
   await migrateDatabase(db);
-  const router = await createAppRouter({ db, verifyClient });
+  const router = await createRouter({ db, verifyClient });
   const server = http.createServer(
     createObservedListener(router.fetch, config, { trustProxy: isHmr, trustedProxyIps }),
   );
@@ -59,6 +61,8 @@ export async function startServer({
     logger("server.error", { error: String(error) }, "error");
     shutdown(1);
   });
+
+  return server;
 }
 
 if (import.meta.main) await startServer();
