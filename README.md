@@ -6,9 +6,12 @@ Organize potlucks with your friends. Create an event, share an invitation link, 
 
 Run the app as a single container with one HTTP port and a persistent volume for SQLite data. Configure your host to serve it over HTTPS and back up the data volume regularly.
 
+Set the three `TWILIO_*` variables from `.env.example` in a deployment environment file.
+
 ```sh
 docker pull ghcr.io/glitchassassin/potluck-planner:latest
 docker run -d --name potluck-planner --restart unless-stopped \
+  --env-file ./.env.production \
   -p 44100:44100 -v potluck-data:/data \
   ghcr.io/glitchassassin/potluck-planner:latest
 ```
@@ -25,7 +28,7 @@ npm ci
 npm run dev
 ```
 
-Open http://localhost:44100. See `.env.example` for configuration; export overrides in your shell.
+Open http://127.0.0.1:44100 and use code `000000` to verify a supported phone number. The development server uses a Twilio Verify mock and stores accounts in `db/mock.sqlite`. See `.env.example` for other configuration and export overrides in your shell.
 
 Run type checking, linting, formatting checks, and server tests:
 
@@ -33,7 +36,7 @@ Run type checking, linting, formatting checks, and server tests:
 npm run check
 ```
 
-Run browser and accessibility checks against the production build:
+Run browser and accessibility checks against the production build with the Verify mock and an in-memory database:
 
 ```sh
 npm run build
@@ -42,4 +45,4 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Use `npm run format` to apply formatting. SQLite migration commands are `npm run db:status`, `npm run db:migrate`, and `npm run db:rollback`; add SQL migrations under `db/migrations` as the schema develops.
+Use `npm run format` to apply formatting. SQLite migration commands are `npm run db:status`, `npm run db:migrate`, and `npm run db:rollback`. Set `DATABASE_PATH=./db/mock.sqlite` when running those commands against the development database. Add SQL migrations under `db/migrations`.

@@ -1,12 +1,16 @@
-import { Document } from "./document.tsx";
+import type { Handle } from "remix/component";
 
-export function HomePage() {
+import { routes } from "../routes.ts";
+import { AuthPage } from "./auth-page.tsx";
+
+export function HomePage(handle: Handle<{ name: string }>) {
   return () => (
-    <Document title="Potluck Planner">
-      <main>
-        <h1>Hello world</h1>
-        <p>Potluck Planner</p>
-      </main>
-    </Document>
+    <AuthPage heading={`Welcome, ${handle.props.name}`}>
+      <form method="post" action={routes.signIn.logout.href()}>
+        <button type="submit" class="potluck-secondary">
+          Log out
+        </button>
+      </form>
+    </AuthPage>
   );
 }

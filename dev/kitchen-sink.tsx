@@ -3,7 +3,7 @@ import { createAction } from "remix/router";
 import { get } from "remix/routes";
 
 import { Document } from "../app/actions/document.tsx";
-import { designSystem, palette } from "../app/ui/design-system.ts";
+import { designSystem, fontStylesheet, palette } from "../app/ui/design-system.ts";
 
 const backgrounds = [
   { theme: "Default", file: "default", title: "Sunday potluck" },
@@ -94,12 +94,7 @@ function KitchenSink() {
   return () => (
     <Document
       title="Design system | Potluck Planner"
-      head={
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Instrument+Sans:wght@400..700&display=swap"
-        />
-      }
+      head={<link rel="stylesheet" href={fontStylesheet} />}
     >
       <div mix={[designSystem, kitchenSinkStyles]}>
         <header class="potluck-wordmark">Potluck Planner</header>

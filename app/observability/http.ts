@@ -62,7 +62,9 @@ export function createObservedListener(
     }
     const pathname = url.pathname;
     const query: Record<string, string[]> = Object.create(null);
-    for (const [name, value] of url.searchParams) (query[name] ??= []).push(value);
+    for (const [name, value] of url.searchParams) {
+      (query[name] ??= []).push(name === "returnTo" ? "[redacted]" : value);
+    }
     requestContext.run(context, () => {
       response.setHeader("X-Request-ID", context.requestId);
       let recorded = false;
