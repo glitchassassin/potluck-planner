@@ -8,6 +8,7 @@ import { createAccount, findAccountByPhone } from "../auth/accounts.ts";
 import { requireAccount, safeReturnPath } from "../auth/route-guard.ts";
 import { createSessions } from "../auth/sessions.ts";
 import { migrateDatabase, openDatabase } from "../db.ts";
+import { clientIps } from "../observability/client-ip.ts";
 import { createAppRouter } from "../router.ts";
 
 const phone = "+1 212-555-0142";
@@ -32,7 +33,7 @@ async function fixture() {
     now,
   });
 
-  function browser() {
+  function browser(ip = "192.0.2.1") {
     const cookies = new Map<string, string>();
     return {
       cookieHeader: () => [...cookies.values()].join("; "),
@@ -41,13 +42,13 @@ async function fixture() {
         if (!requestHeaders.has("Cookie")) {
           requestHeaders.set("Cookie", [...cookies.values()].join("; "));
         }
-        const response = await router.fetch(
-          new Request(new URL(path, "https://potluck.test"), {
-            method: fields ? "POST" : "GET",
-            body: fields ? new URLSearchParams(fields) : undefined,
-            headers: requestHeaders,
-          }),
-        );
+        const request = new Request(new URL(path, "https://potluck.test"), {
+          method: fields ? "POST" : "GET",
+          body: fields ? new URLSearchParams(fields) : undefined,
+          headers: requestHeaders,
+        });
+        clientIps.set(request, ip);
+        const response = await router.fetch(request);
         for (const cookie of response.headers.getSetCookie()) {
           const pair = cookie.split(";", 1)[0];
           const name = pair.split("=", 1)[0];
@@ -151,14 +152,25 @@ describe("sign-in controller", () => {
     assert.ok(signIn);
     const returnTo = new URL(signIn, "https://potluck.test").searchParams.get("returnTo");
     assert.equal(returnTo, destination);
-    assert.equal(location(await browser.request("/sign-in", { phone, returnTo })), "/sign-in/code");
+    const start = await browser.request("/sign-in", { phone, returnTo });
+    assert.equal(location(start), "/sign-in/code");
+    const returnCookie =
+      start.headers.getSetCookie().find((cookie) => cookie.includes("potluck_return_to=")) ?? "";
+    assert.match(returnCookie, /Max-Age=1200\b/i);
+    assert.match(returnCookie, /HttpOnly/i);
     assert.equal(
       location(await browser.request("/sign-in/code", { code: "000000" })),
       "/sign-in/name",
     );
 
     invitationValid = false;
-    assert.equal(location(await browser.request("/sign-in/name", { name: "Alex" })), destination);
+    const signup = await browser.request("/sign-in/name", { name: "Alex" });
+    assert.equal(location(signup), destination);
+    assert.match(
+      signup.headers.getSetCookie().find((cookie) => cookie.includes("potluck_return_to=")) ?? "",
+      /Max-Age=0\b/i,
+    );
+    assert.doesNotMatch(browser.cookieHeader(), /potluck_return_to=/);
     const denied = await browser.request(destination);
     assert.equal(denied.status, 403);
     assert.equal(await denied.text(), "Invitation expired");
@@ -171,9 +183,16 @@ describe("sign-in controller", () => {
     const first = app.browser();
     const second = app.browser();
 
-    for (const browser of [first, second]) {
-      assert.equal(location(await browser.request("/sign-in", { phone })), "/sign-in/code");
-      assert.equal(location(await browser.request("/sign-in/code", { code: "000000" })), "/");
+    for (const [browser, returnTo] of [
+      [first, "/?from=returning"],
+      [second, "/"],
+    ] as const) {
+      assert.equal(
+        location(await browser.request("/sign-in", { phone, returnTo })),
+        "/sign-in/code",
+      );
+      assert.equal(location(await browser.request("/sign-in/code", { code: "000000" })), returnTo);
+      assert.doesNotMatch(browser.cookieHeader(), /potluck_return_to=/);
       app.advance(60_000);
     }
     assert.deepEqual(await findAccountByPhone(app.db, phone), account);
@@ -204,5 +223,71 @@ describe("sign-in controller", () => {
     for (const path of ["//other.test", "/\\other.test", "/x/..//other.test", "/\t/other.test"]) {
       assert.equal(safeReturnPath(path), "/");
     }
+  });
+
+  it("revalidates the return cookie before redirecting a returning user", async () => {
+    await using app = await fixture();
+    await createAccount(app.db, { verifiedPhoneNumber: phone, name: "Alex" });
+    const browser = app.browser();
+    const start = await browser.request("/sign-in", { phone, returnTo: "/?from=invitation" });
+    assert.equal(location(start), "/sign-in/code");
+    const forged = Buffer.from("//other.test").toString("base64url");
+    const cookie = browser
+      .cookieHeader()
+      .replace(/potluck_return_to=[^;]+/, `potluck_return_to=${forged}`);
+
+    assert.notEqual(cookie, browser.cookieHeader());
+    const login = await browser.request("/sign-in/code", { code: "000000" }, { Cookie: cookie });
+    assert.equal(location(login), "/");
+    assert.doesNotMatch(browser.cookieHeader(), /potluck_return_to=/);
+  });
+
+  it("shares the per-IP send quota across phones, browsers, and resend", async () => {
+    await using app = await fixture();
+    const browser = app.browser();
+    const anotherBrowser = app.browser();
+    const otherNetwork = app.browser("192.0.2.2");
+    for (let number = 150; number < 160; number++) {
+      const response = await browser.request("/sign-in", { phone: `212-555-0${number}` });
+      assert.equal(location(response), "/sign-in/code");
+    }
+
+    const blocked = await anotherBrowser.request("/sign-in", { phone });
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.headers.get("Retry-After"), "600");
+    assert.match(await blocked.text(), /Too many code requests from your network/);
+    assert.equal((await browser.request("/sign-in/resend", {})).status, 429);
+    assert.equal(app.sent.length, 10);
+    assert.equal(location(await otherNetwork.request("/sign-in", { phone })), "/sign-in/code");
+    assert.equal(
+      location(await browser.request("/sign-in/code", { code: "000000" })),
+      "/sign-in/name",
+    );
+
+    app.advance(599_999);
+    assert.equal((await anotherBrowser.request("/sign-in", { phone })).status, 429);
+    app.advance(1);
+    assert.equal(location(await anotherBrowser.request("/sign-in", { phone })), "/sign-in/code");
+  });
+
+  it("limits code checks per IP before verifying a correct code", async () => {
+    await using app = await fixture();
+    const browser = app.browser();
+    const otherNetwork = app.browser("192.0.2.2");
+    assert.equal(location(await browser.request("/sign-in", { phone })), "/sign-in/code");
+    for (let attempt = 0; attempt < 30; attempt++) {
+      assert.equal((await browser.request("/sign-in/code", { code: "invalid" })).status, 400);
+    }
+
+    const blocked = await browser.request("/sign-in/code", { code: "000000" });
+    assert.equal(blocked.status, 429);
+    assert.equal(blocked.headers.get("Retry-After"), "600");
+    assert.match(await blocked.text(), /Too many verification attempts from your network/);
+    const checked = await otherNetwork.request(
+      "/sign-in/code",
+      { code: "000000" },
+      { Cookie: browser.cookieHeader() },
+    );
+    assert.equal(location(checked), "/sign-in/name");
   });
 });

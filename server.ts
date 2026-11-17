@@ -3,6 +3,7 @@ import * as http from "node:http";
 import { assets } from "./app/assets.ts";
 import { createTwilioVerifyClient, type VerifyClient } from "./app/auth/twilio-verify.ts";
 import { migrateDatabase, openDatabase } from "./app/db.ts";
+import { readTrustedProxyIps } from "./app/observability/client-ip.ts";
 import { createObservedListener } from "./app/observability/http.ts";
 import { createLogger, readLogConfig } from "./app/observability/logger.ts";
 import { createAppRouter } from "./app/router.ts";
@@ -24,11 +25,12 @@ export async function startServer({
 
   const config = readLogConfig();
   const logger = createLogger(config);
+  const trustedProxyIps = readTrustedProxyIps();
   const db = openDatabase(databasePath);
   await migrateDatabase(db);
   const router = await createAppRouter({ db, verifyClient });
   const server = http.createServer(
-    createObservedListener(router.fetch, config, { trustProxy: isHmr }),
+    createObservedListener(router.fetch, config, { trustProxy: isHmr, trustedProxyIps }),
   );
 
   server.listen({ port, host }, () => {

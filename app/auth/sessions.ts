@@ -3,6 +3,7 @@ import { createCookie, type Cookie } from "remix/cookie";
 import { sql, type Database } from "remix/data-table";
 
 import { createAccount, findAccountByPhone, type Account } from "./accounts.ts";
+import { safeReturnPath } from "./route-guard.ts";
 
 const sessionAge = 30 * 24 * 60 * 60;
 const pendingAge = 20 * 60;
@@ -11,13 +12,10 @@ const signupAge = 10 * 60;
 interface Flow {
   tokenHash: string;
   phone: string;
-  returnPath: string;
   verified: 0 | 1;
 }
 
-type SignInResult = { returnPath: string; cookies: string[] };
-
-const flowColumns = sql`token_hash AS tokenHash, phone_e164 AS phone, return_path AS returnPath, verified`;
+const flowColumns = sql`token_hash AS tokenHash, phone_e164 AS phone, verified`;
 
 export function createSessions(
   db: Database<"sqlite">,
@@ -26,16 +24,21 @@ export function createSessions(
   const prefix = secure ? "__Host-" : "";
   const cookieOptions = { httpOnly: true, secure, sameSite: "Lax", path: "/" } as const;
   const flowCookie = createCookie(`${prefix}potluck_flow`, cookieOptions);
+  const returnToCookie = createCookie(`${prefix}potluck_return_to`, {
+    ...cookieOptions,
+    encode: (value) => Buffer.from(value).toString("base64url"),
+    decode: (value) => Buffer.from(value, "base64url").toString(),
+  });
   const sessionCookie = createCookie(`${prefix}potluck_session`, {
     ...cookieOptions,
     maxAge: sessionAge,
   });
 
-  async function startSession(
-    tx: Database<"sqlite">,
-    account: Account,
-    flow: Flow,
-  ): Promise<SignInResult> {
+  function setReturnPath(path: string, maxAge: number): Promise<string> {
+    return path === "/" ? clearCookie(returnToCookie) : returnToCookie.serialize(path, { maxAge });
+  }
+
+  async function startSession(tx: Database<"sqlite">, account: Account): Promise<string[]> {
     const token = newToken();
     const startedAt = now();
     await tx.exec(sql`DELETE FROM auth_sessions WHERE expires_at <= ${startedAt}`);
@@ -43,13 +46,18 @@ export function createSessions(
       INSERT INTO auth_sessions (token_hash, account_id, expires_at)
       VALUES (${hash(token)}, ${account.id}, ${startedAt + sessionAge * 1000})
     `);
-    return {
-      returnPath: flow.returnPath,
-      cookies: [await sessionCookie.serialize(token), await clearCookie(flowCookie)],
-    };
+    return [
+      await sessionCookie.serialize(token),
+      await clearCookie(flowCookie),
+      await clearCookie(returnToCookie),
+    ];
   }
 
   return {
+    async readReturnPath(request: Request): Promise<string> {
+      return safeReturnPath(await returnToCookie.parse(request.headers.get("Cookie")));
+    },
+
     async readFlow(request: Request): Promise<Flow | null> {
       const tokenHash = await readTokenHash(flowCookie, request);
       if (!tokenHash) return null;
@@ -60,7 +68,7 @@ export function createSessions(
       return (result.rows?.[0] as Flow | undefined) ?? null;
     },
 
-    async startFlow(request: Request, phone: string, returnPath: string): Promise<string> {
+    async startFlow(request: Request, phone: string, returnPath: string): Promise<string[]> {
       const previousHash = await readTokenHash(flowCookie, request);
       const token = newToken();
       const timestamp = now();
@@ -69,21 +77,22 @@ export function createSessions(
           DELETE FROM auth_flows WHERE expires_at <= ${timestamp} OR token_hash = ${previousHash}
         `);
         await tx.exec(sql`
-          INSERT INTO auth_flows (token_hash, phone_e164, return_path, expires_at)
-          VALUES (${hash(token)}, ${phone}, ${returnPath}, ${timestamp + pendingAge * 1000})
+          INSERT INTO auth_flows (token_hash, phone_e164, expires_at)
+          VALUES (${hash(token)}, ${phone}, ${timestamp + pendingAge * 1000})
         `);
       });
-      return flowCookie.serialize(token);
+      return [await flowCookie.serialize(token), await setReturnPath(returnPath, pendingAge)];
     },
 
-    async extendPendingFlow(flow: Flow): Promise<void> {
-      await db.exec(sql`
+    async extendPendingFlow(flow: Flow, returnPath: string): Promise<string | null> {
+      const result = await db.exec(sql`
         UPDATE auth_flows SET expires_at = ${now() + pendingAge * 1000}
         WHERE token_hash = ${flow.tokenHash} AND verified = 0
       `);
+      return result.affectedRows === 1 ? setReturnPath(returnPath, pendingAge) : null;
     },
 
-    async finishVerification(flow: Flow) {
+    async finishVerification(flow: Flow, returnPath: string) {
       const token = newToken();
       const timestamp = now();
       return db.transaction(async (tx) => {
@@ -102,16 +111,19 @@ export function createSessions(
         if (!account) {
           return {
             status: "choose_name" as const,
-            cookie: await flowCookie.serialize(token, { maxAge: signupAge }),
+            cookies: [
+              await flowCookie.serialize(token, { maxAge: signupAge }),
+              await setReturnPath(returnPath, signupAge),
+            ],
           };
         }
 
         await tx.exec(sql`DELETE FROM auth_flows WHERE token_hash = ${verified.tokenHash}`);
-        return { status: "signed_in" as const, ...(await startSession(tx, account, verified)) };
+        return { status: "signed_in" as const, cookies: await startSession(tx, account) };
       });
     },
 
-    async finishSignup(flow: Flow, name: string): Promise<SignInResult | null> {
+    async finishSignup(flow: Flow, name: string): Promise<string[] | null> {
       return db.transaction(async (tx) => {
         // Consume the proof in the same transaction that creates the account and session.
         const result = await tx.exec(sql`
@@ -126,7 +138,7 @@ export function createSessions(
           (await createAccount(tx, { verifiedPhoneNumber: verified.phone, name })) ??
           (await findAccountByPhone(tx, verified.phone));
         if (!account) throw new Error("Verified account could not be loaded");
-        return startSession(tx, account, verified);
+        return startSession(tx, account);
       });
     },
 
@@ -152,7 +164,11 @@ export function createSessions(
           await tx.exec(sql`DELETE FROM auth_flows WHERE token_hash = ${flowHash}`);
         }
       });
-      return [await clearCookie(sessionCookie), await clearCookie(flowCookie)];
+      return [
+        await clearCookie(sessionCookie),
+        await clearCookie(flowCookie),
+        await clearCookie(returnToCookie),
+      ];
     },
   };
 }

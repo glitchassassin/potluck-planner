@@ -39,7 +39,9 @@ export function safeReturnPath(value: string | null): string {
   }
   const url = new URL(value, "https://potluck.invalid");
   // Dot-segment normalization can produce a pathname beginning with two slashes.
-  return url.pathname.startsWith("//") ? "/" : url.pathname + url.search;
+  const path = url.pathname + url.search;
+  // Keep the base64url-encoded destination within the browser's cookie size limit.
+  return url.pathname.startsWith("//") || path.length > 2500 ? "/" : path;
 }
 
 export function authRedirect(path: string, cookies: string[] = []): Response {

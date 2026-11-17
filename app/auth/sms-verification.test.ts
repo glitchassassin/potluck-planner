@@ -114,7 +114,7 @@ it("only dispatches one concurrent send across separate SQLite connections", asy
     const second = createSmsVerificationService(open(), { client, now });
     const inFlight = first.send(phone);
     try {
-      assert.equal((await second.send(phone)).status, "cooldown");
+      assert.equal((await second.send(phone)).status, "busy");
       assert.deepEqual(sent, [phone]);
     } finally {
       release.resolve();
@@ -189,9 +189,11 @@ it("reports expiry when the same SID comes back after its original expiry", asyn
     const service = createSmsVerificationService(db, { client: lateClient, now });
     const result = await service.send(phone);
     assert.equal(result.status, "expired");
-    assert.equal(result.retryAt, expiry + 59_000);
     assert.equal((await service.check(phone, correctCode)).status, "no_active_verification");
-    assert.equal((await service.send(phone)).status, "cooldown");
+    assert.equal(
+      (await createSmsVerificationService(db, { client, now }).send(phone)).status,
+      "sent",
+    );
     assert.deepEqual(checked, []);
   });
 });
@@ -274,7 +276,7 @@ it("accepts an approved verification once across concurrent checks and a restart
   });
 });
 
-it("keeps the cooldown after a failed send or a lost response", async () => {
+it("allows retry after a provider failure and recovers an interrupted send when its lease expires", async () => {
   await fixture(async ({ db, open, client, now, advanceTo }) => {
     const failedDelivery: VerifyClient = {
       ...client,
@@ -282,10 +284,9 @@ it("keeps the cooldown after a failed send or a lost response", async () => {
     };
     const first = createSmsVerificationService(db, { client: failedDelivery, now });
     assert.equal((await first.send(phone)).status, "delivery_failed");
-    assert.equal((await first.send(phone)).status, "cooldown");
+    assert.equal((await first.send(phone)).status, "delivery_failed");
 
-    advanceTo(start + 60_000);
-    // The reservation survives if the operation stops before it can record Twilio's response.
+    // The in-flight lease survives a restart even before a confirmed send sets the cooldown.
     const interrupted: VerifyClient = {
       ...client,
       send: async () => {
@@ -296,9 +297,9 @@ it("keeps the cooldown after a failed send or a lost response", async () => {
     await assert.rejects(abandoned.send(phone), /Interrupted/);
     await db.close();
     const restarted = createSmsVerificationService(open(), { client, now });
-    advanceTo(start + 119_000);
-    assert.equal((await restarted.send(phone)).status, "cooldown");
-    advanceTo(start + 120_000);
+    advanceTo(start + 29_000);
+    assert.equal((await restarted.send(phone)).status, "busy");
+    advanceTo(start + 30_000);
     assert.equal((await restarted.send(phone)).status, "sent");
   });
 });

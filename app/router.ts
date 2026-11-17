@@ -9,6 +9,7 @@ import { createHomeAction, serveAsset } from "./actions/controller.tsx";
 import { createSignInController } from "./actions/sign-in-controller.tsx";
 import { assets } from "./assets.ts";
 import { createSessions } from "./auth/sessions.ts";
+import { createSignInLimits } from "./auth/sign-in-limits.ts";
 import { createSmsVerificationService } from "./auth/sms-verification.ts";
 import type { VerifyClient } from "./auth/twilio-verify.ts";
 import { logger } from "./observability/logger.ts";
@@ -34,7 +35,7 @@ export async function createAppRouter({
   });
   const sessions = createSessions(db, { now });
   const sms = createSmsVerificationService(db, { client: verifyClient, now });
-  const signIn = createSignInController({ sessions, sms, now });
+  const signIn = createSignInController({ sessions, sms, limit: createSignInLimits(db, now), now });
 
   router.map(routes.assets, serveAsset);
   router.map(routes.home, createHomeAction(sessions));

@@ -16,13 +16,13 @@ const operationLeaseMs = 3 * verifyRequestTimeoutMs;
 
 const messages = {
   unsupported_destination: "Use a phone number that can receive SMS.",
-  delivery_failed: "We couldn't send the code. Check the number and try again in a minute.",
+  delivery_failed: "We couldn't send the code. Check the number and try again.",
   temporarily_blocked:
     "SMS verification is temporarily unavailable for this number. Try again later.",
   rate_limited: "SMS verification is temporarily rate limited. Wait a few minutes and try again.",
-  unavailable: "SMS verification is temporarily unavailable. Try again in a minute.",
+  unavailable: "SMS verification is temporarily unavailable. Try again shortly.",
   cooldown: "Wait before requesting another code.",
-  expired: "This verification code has expired. Wait before requesting another one.",
+  expired: "This verification code has expired. Request a new one.",
   busy: "A verification request is in progress. Try again shortly.",
   no_active_verification: "Request a new verification code.",
   attempt_limit: "Too many incorrect codes. Wait before requesting a new code.",
@@ -40,9 +40,8 @@ type AttemptLimit = Failure<"attempt_limit"> & { retryAt: number };
 export type SendSmsResult =
   | { status: "sent"; expiresAt: number; retryAt: number }
   | (Failure<"cooldown"> & { retryAt: number })
-  | (Failure<"expired"> & { retryAt: number })
   | AttemptLimit
-  | Failure<VerifyFailure | "busy">;
+  | Failure<VerifyFailure | "busy" | "expired">;
 
 export type CheckSmsResult =
   | { status: "verified" }
@@ -80,7 +79,8 @@ export function createSmsVerificationService(
     const result = await db.exec(sql`
       update sms_verifications
       set verification_sid = ${state.verification_sid}, expires_at = ${state.expires_at},
-          failed_attempts = ${state.failed_attempts}, operation_id = null, operation_expires_at = 0
+          failed_attempts = ${state.failed_attempts}, next_send_at = ${state.next_send_at},
+          operation_id = null, operation_expires_at = 0
       where phone_e164 = ${phoneE164} and operation_id = ${operationId}
     `);
     return result.affectedRows === 1;
@@ -91,12 +91,11 @@ export function createSmsVerificationService(
       if (!isE164(phoneE164)) return failure("unsupported_destination");
       const startedAt = now();
       const operationId = randomUUID();
-      // Reserve the cooldown before calling Twilio because the SMS can be sent even if the response is lost.
+      // The operation lease prevents concurrent sends while Twilio handles the request.
       const state = await read(sql`
-        insert into sms_verifications (phone_e164, next_send_at, operation_id, operation_expires_at)
-        values (${phoneE164}, ${startedAt + cooldownMs}, ${operationId}, ${startedAt + operationLeaseMs})
+        insert into sms_verifications (phone_e164, operation_id, operation_expires_at)
+        values (${phoneE164}, ${operationId}, ${startedAt + operationLeaseMs})
         on conflict (phone_e164) do update set
-          next_send_at = excluded.next_send_at,
           operation_id = excluded.operation_id,
           operation_expires_at = excluded.operation_expires_at
         where next_send_at <= ${startedAt} and operation_expires_at <= ${startedAt}
@@ -122,10 +121,13 @@ export function createSmsVerificationService(
           state.expires_at = response.createdAt + validityMs;
           state.failed_attempts = 0;
         }
-        result =
-          state.expires_at > now()
-            ? { status: "sent", expiresAt: state.expires_at, retryAt: state.next_send_at }
-            : { ...failure("expired"), retryAt: state.next_send_at };
+        const sentAt = now();
+        if (state.expires_at > sentAt) {
+          state.next_send_at = sentAt + cooldownMs;
+          result = { status: "sent", expiresAt: state.expires_at, retryAt: state.next_send_at };
+        } else {
+          result = failure("expired");
+        }
       } else if (response.status === "attempt_limit") {
         state.failed_attempts =
           state.expires_at !== null && state.expires_at > startedAt ? maxAttempts : 0;

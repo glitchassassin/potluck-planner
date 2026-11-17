@@ -18,6 +18,8 @@ docker run -d --name potluck-planner --restart unless-stopped \
 
 The app is available on port `44100`, with data stored in `/data`.
 
+Behind a reverse proxy, set `TRUSTED_PROXY_IPS` to the proxy addresses seen by the app so sign-in limits apply to each client. Restrict direct access to the app port and configure the trusted proxy to remove incoming `Forwarded` and `X-Forwarded-*` headers before setting its own.
+
 ## Development
 
 Use Node 24 and npm:
