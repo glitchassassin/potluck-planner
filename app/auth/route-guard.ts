@@ -2,14 +2,13 @@ import { createContextKey, type Middleware } from "remix/router";
 import { redirect } from "remix/response/redirect";
 
 import { routes } from "../routes.ts";
-import type { Account } from "./accounts.ts";
-import type { createSessions } from "./sessions.ts";
+import type { createSessions, SessionAccount } from "./sessions.ts";
 
-export const CurrentAccount = createContextKey<Account>();
+export const CurrentAccount = createContextKey<SessionAccount>();
 
 export function requireAccount(
   sessions: Pick<ReturnType<typeof createSessions>, "readAccount">,
-): Middleware<{ key: typeof CurrentAccount; value: Account; property: "account" }> {
+): Middleware<{ key: typeof CurrentAccount; value: SessionAccount; property: "account" }> {
   return async (context, next) => {
     const account = await sessions.readAccount(context.request);
     if (!account) return authRedirect(signInHref(context.url.pathname + context.url.search));

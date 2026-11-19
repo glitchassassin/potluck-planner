@@ -11,6 +11,12 @@ export interface Account {
 
 export type AccountRole = "user" | "admin";
 
+export interface AccountPermissions {
+  isHost: boolean;
+  isAdmin: boolean;
+  canCreateEvents: boolean;
+}
+
 /** Creates an account after the caller verifies the phone number. Returns null for a duplicate. */
 export async function createAccount(
   db: Database<"sqlite">,
@@ -55,6 +61,19 @@ export async function findAccountByPhone(
   return row ?? null;
 }
 
+/** Records the Host grant for an existing account. Returns false when the ID is unknown. */
+export async function setHostGrant(
+  db: Database<"sqlite">,
+  accountId: Account["id"],
+  granted: boolean,
+): Promise<boolean> {
+  const result = await db.exec(sql`
+    UPDATE accounts SET has_host_grant = ${granted ? 1 : 0}
+    WHERE id = ${accountId}
+  `);
+  return result.affectedRows === 1;
+}
+
 export function readAdminPhoneAllowlist(
   value = process.env.ADMIN_PHONE_ALLOWLIST,
 ): ReadonlySet<string> {
@@ -71,4 +90,9 @@ export function readAdminPhoneAllowlist(
 
 export function resolveAccountRole(account: Account): AccountRole {
   return readAdminPhoneAllowlist().has(account.verifiedPhoneNumber) ? "admin" : "user";
+}
+
+export function resolveAccountPermissions(account: Account, isHost: boolean): AccountPermissions {
+  const isAdmin = resolveAccountRole(account) === "admin";
+  return { isHost, isAdmin, canCreateEvents: isHost || isAdmin };
 }

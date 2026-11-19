@@ -2,7 +2,13 @@ import { createHash, randomBytes } from "node:crypto";
 import { createCookie, type Cookie } from "remix/cookie";
 import { sql, type Database } from "remix/data-table";
 
-import { createAccount, findAccountByPhone, type Account } from "./accounts.ts";
+import {
+  createAccount,
+  findAccountByPhone,
+  resolveAccountPermissions,
+  type Account,
+  type AccountPermissions,
+} from "./accounts.ts";
 import { safeReturnPath } from "./route-guard.ts";
 
 const sessionAge = 30 * 24 * 60 * 60;
@@ -13,6 +19,10 @@ interface Flow {
   tokenHash: string;
   phone: string;
   verified: 0 | 1;
+}
+
+export interface SessionAccount extends Account {
+  permissions: AccountPermissions;
 }
 
 const flowColumns = sql`token_hash AS tokenHash, phone_e164 AS phone, verified`;
@@ -142,15 +152,19 @@ export function createSessions(
       });
     },
 
-    async readAccount(request: Request): Promise<Account | null> {
+    async readAccount(request: Request): Promise<SessionAccount | null> {
       const tokenHash = await readTokenHash(sessionCookie, request);
       if (!tokenHash) return null;
       const result = await db.exec(sql`
-        SELECT accounts.id, accounts.verified_phone_number AS verifiedPhoneNumber, accounts.name
+        SELECT accounts.id, accounts.verified_phone_number AS verifiedPhoneNumber, accounts.name,
+          accounts.has_host_grant AS hasHostGrant
         FROM auth_sessions JOIN accounts ON accounts.id = auth_sessions.account_id
         WHERE auth_sessions.token_hash = ${tokenHash} AND auth_sessions.expires_at > ${now()}
       `);
-      return (result.rows?.[0] as Account | undefined) ?? null;
+      const row = result.rows?.[0] as (Account & { hasHostGrant: 0 | 1 }) | undefined;
+      if (!row) return null;
+      const { hasHostGrant, ...account } = row;
+      return { ...account, permissions: resolveAccountPermissions(account, hasHostGrant === 1) };
     },
 
     async logout(request: Request): Promise<string[]> {
